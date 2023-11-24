@@ -94,7 +94,7 @@ class PersistenceTest(TestCase):
           os.path.isfile('{0}/resource.zip'.format(
             _storage_object._storage_folder())))
         # digest zip contains metadata.xml and storage-global.json
-        _zf_name = '{0}/resource.zip'.format( _storage_object._storage_folder())
+        _zf_name = '{0}/resource.zip'.format(_storage_object._storage_folder())
         _zf = zipfile.ZipFile(_zf_name, mode='r')
         self.assertTrue('metadata.xml' in _zf.namelist())
         self.assertTrue('storage-global.json' in _zf.namelist())

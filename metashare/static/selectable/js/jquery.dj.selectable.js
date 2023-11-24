@@ -1,0 +1,1 @@
+../../../../venv/lib/python2.7/site-packages/selectable/static/selectable/js/jquery.dj.selectable.js

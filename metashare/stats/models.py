@@ -1,6 +1,6 @@
 from django.db import models
 from datetime import datetime
-        
+
 class LRStats(models.Model):
     # the storage object identifier of the language resource,
     # NOT the pk of the resource!
@@ -27,7 +27,7 @@ class LRStats(models.Model):
     #   return "L>> " +  self.userid + "," +self.lrid  + "," + self.action  + "," \
     #        + str(self.lasttime) + "," + self.sessid+ "," + str(self.count)+ "," \
     #        + str(self.ignored)
-        
+
 class QueryStats(models.Model):
     userid = models.CharField(blank=False, max_length=64)
     geoinfo = models.CharField(blank=True, max_length=2)

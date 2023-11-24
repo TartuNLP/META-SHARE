@@ -1,4 +1,7 @@
 import datetime
+import tempfile
+
+from metashare.ladu_utils import ladu_move_file_to_storage
 
 from django import forms
 from django.contrib import admin, messages
@@ -149,7 +152,6 @@ class ResourceComponentInlineFormSet(ReverseInlineFormSet):
         self.save_media(lexicon.lexicalConceptualResourceMediaType, \
              ('lexicalConceptualResourceTextInfo', 'lexicalConceptualResourceAudioInfo', \
               'lexicalConceptualResourceVideoInfo', 'lexicalConceptualResourceImageInfo'))
-                
     def save_toolservice(self, tool, commit):
         pass
 
@@ -764,7 +766,7 @@ class ResourceModelAdmin(SchemaModelAdmin):
               % {'name': force_unicode(opts.verbose_name), 'key': escape(object_id)})
 
         existing_download = storage_object.get_download()
-        storage_folder = storage_object._storage_folder()
+        storage_folder = storage_object._storage_folder_ladu()
 
         if request.method == 'POST':
             form = StorageObjectUploadForm(request.POST, request.FILES)
@@ -786,14 +788,19 @@ class ResourceModelAdmin(SchemaModelAdmin):
 
                 if _extension:
                     _storage_folder = storage_object._storage_folder()
-                    _out_filename = '{}/archive.{}'.format(_storage_folder,
-                      _extension)
-
-                    # Copy uploaded file to storage folder for this object.                    
+                    # _out_filename = '{}/archive.{}'.format(_storage_folder, _extension)
+                    #
+                    # # Copy uploaded file to storage folder for this object.
+                    # with open(_out_filename, 'wb') as _out_file:
+                    #     # pylint: disable-msg=E1101
+                    #     for _chunk in resource.chunks():
+                    #         _out_file.write(_chunk)
+                    # LADU
+                    _out_filename = "{0}/archive.{1}".format(tempfile.gettempdir(), _extension)
                     with open(_out_filename, 'wb') as _out_file:
-                        # pylint: disable-msg=E1101
                         for _chunk in resource.chunks():
                             _out_file.write(_chunk)
+                    ladu_move_file_to_storage(_out_filename, storage_object._storage_folder_ladu())
 
                     # Update the corresponding StorageObject to update its
                     # download data checksum.
@@ -801,7 +808,7 @@ class ResourceModelAdmin(SchemaModelAdmin):
                     obj.storage_object.save()
 
                     change_message = 'Uploaded "{}" to "{}" in {}.'.format(
-                      resource.name, storage_object._storage_folder(),
+                      resource.name, storage_object._storage_folder_ladu(),
                       storage_object)
 
                     self.log_change(request, obj, change_message)

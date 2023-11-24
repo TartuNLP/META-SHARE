@@ -67,8 +67,9 @@ GEOIP_DATA_URL = "http://geolite.maxmind.com/download/geoip/database/GeoLiteCoun
 # If STORAGE_PATH or LOCK_DIR does not exist, try to create it and halt if not
 # possible.
 try:
-    if not os.path.isdir(STORAGE_PATH):
-        os.makedirs(STORAGE_PATH)
+    # Vaatame, mis juhtub...
+    # if not os.path.isdir(STORAGE_PATH):
+    #     os.makedirs(STORAGE_PATH)
     if not os.path.isdir(LOCK_DIR):
         os.makedirs(LOCK_DIR)
 except:

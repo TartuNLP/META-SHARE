@@ -25,3 +25,7 @@ lighttpd/
 opt/
 ._*
 venv
+.git/
+.idea/
+data/
+minio-binaries/

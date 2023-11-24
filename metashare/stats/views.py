@@ -425,7 +425,8 @@ def getstats (request):
         # export stats about published LRs only
         lrstats = {}
         resources =  resourceInfoType_model.objects \
-            .filter(storage_object__publication_status=PUBLISHED, storage_object__deleted=False)
+            .filter(storage_object__publication_status=PUBLISHED, 
+                    storage_object__deleted=False)
         for resource in resources:
             lrstats[resource.storage_object.identifier] = getLRStats(resource.storage_object.identifier)
         data["lrstats"] = lrstats

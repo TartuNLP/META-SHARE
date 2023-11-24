@@ -1,10 +1,13 @@
+import tempfile
+from metashare.ladu_utils import *
+
 from django.core.exceptions import ValidationError, ObjectDoesNotExist
 from django.db import models
 # pylint: disable-msg=E0611
 from hashlib import md5
 from metashare.settings import LOG_HANDLER
 from metashare import settings
-from os import mkdir
+from os import mkdir, remove
 from os.path import exists
 import os.path
 from uuid import uuid1, uuid4
@@ -217,7 +220,10 @@ class StorageObject(models.Model):
         Returns the path to the local folder for this storage object instance.
         """
         return '{0}/{1}'.format(settings.STORAGE_PATH, self.identifier)
-    
+
+    def _storage_folder_ladu(self):
+        return self.identifier
+
     def compute_checksum(self):
         """
         Computes the MD5 hash checksum for the binary archive which may be
@@ -264,10 +270,14 @@ class StorageObject(models.Model):
         
         force_digest (optional): if True, always recreate the digest zip-archive
         """
-        # check if the storage folder for this storage object instance exists
-        if self._storage_folder() and not exists(self._storage_folder()):
-            # If not, create the storage folder.
-            mkdir(self._storage_folder())
+        # # check if the storage folder for this storage object instance exists
+        # if self._storage_folder() and not exists(self._storage_folder()):
+        #     # If not, create the storage folder.
+        #     mkdir(self._storage_folder())
+        # Sama asi, aga LADU kasutades
+        if not ladu_folder_exists(self._storage_folder_ladu()):
+            ladu_create_folder(self._storage_folder_ladu())
+
 
         # make sure that any changes to the DJANGO_URL are also reflected in the
         # `source_url` field of master copies
@@ -347,16 +357,26 @@ class StorageObject(models.Model):
         # check if there exists a metadata XML file; this is not the case if
         # the publication status just changed from internal to ingested
         # or if the resource was received when syncing
-        if self.publication_status in (INGESTED, PUBLISHED) \
-          and not os.path.isfile(
-          '{0}/metadata-{1:04d}.xml'.format(self._storage_folder(), self.revision)):
+        # if self.publication_status in (INGESTED, PUBLISHED) \
+        #   and not os.path.isfile(
+        #   '{0}/metadata-{1:04d}.xml'.format(self._storage_folder(), self.revision)):
+        #     update_xml = True
+        # LADU
+        if self.publication_status in (INGESTED, PUBLISHED) and not ladu_file_exists('metadata-{0:04d}.xml'.format(self.revision), self._storage_folder_ladu()):
+        # ???
+        # if self.publication_status in (INGESTED, PUBLISHED) and not ladu_file_exists(self._storage_folder_ladu(), 'metadata-{0:04d}.xml'.format(self.revision)):
             update_xml = True
 
         if update_xml:
             # serialize metadata
-            with open('{0}/metadata-{1:04d}.xml'.format(
-              self._storage_folder(), self.revision), 'wb') as _out:
-                _out.write(unicode(self.metadata).encode('ASCII'))
+            # with open('{0}/metadata-{1:04d}.xml'.format(
+            #   self._storage_folder(), self.revision), 'wb') as _out:
+            #     _out.write(unicode(self.metadata).encode('ASCII'))
+            # LADU
+            with open("{0}/metadata-{1:04d}.xml".format(tempfile.gettempdir(), self.revision), "wb") as _fo:
+                _fo.write(unicode(self.metadata).encode('ASCII'))
+            ladu_move_file_to_storage("{0}/metadata-{1:04d}.xml".format(tempfile.gettempdir(), self.revision),
+                                      self._storage_folder_ladu())
         
         return update_xml
         
@@ -377,9 +397,12 @@ class StorageObject(models.Model):
         if self.global_storage != _global_storage:
             self.global_storage = _global_storage
             if self.publication_status in (INGESTED, PUBLISHED):
-                with open('{0}/storage-global.json'.format(
-                  self._storage_folder()), 'wb') as _out:
+                # with open('{0}/storage-global.json'.format(self._storage_folder()), 'wb') as _out:
+                #     _out.write(unicode(self.global_storage).encode('utf-8'))
+                # LADU
+                with open("{0}/storage-global.json".format(tempfile.gettempdir()), "wb") as _out:
                     _out.write(unicode(self.global_storage).encode('utf-8'))
+                ladu_move_file_to_storage("{0}/storage-global.json".format(tempfile.gettempdir()), self._storage_folder_ladu())
                 return True
                 
         return False
@@ -391,17 +414,18 @@ class StorageObject(models.Model):
         """
 
         if self.copy_status in (MASTER, PROXY):
-            _zf_name = '{0}/resource.zip'.format(self._storage_folder())
-            _zf = zipfile.ZipFile(_zf_name, mode='w', compression=ZIP_DEFLATED)
+            ladu_copy_file_from_storage("{0}/metadata-{1:04d}.xml".format(self._storage_folder_ladu(), self.revision), tempfile.gettempdir())
+            ladu_copy_file_from_storage("{0}/storage-global.json".format(self._storage_folder_ladu()), tempfile.gettempdir())
+            _zf_filename = '{0}/resource.zip'.format(tempfile.gettempdir())
+            _zf = zipfile.ZipFile(_zf_filename, mode='w', compression=ZIP_DEFLATED)
             try:
-                _zf.write(
-                  '{0}/metadata-{1:04d}.xml'.format(self._storage_folder(), self.revision),
-                  arcname='metadata.xml')
-                _zf.write(
-                  '{0}/storage-global.json'.format(self._storage_folder()),
-                  arcname='storage-global.json')
+                _zf.write('{0}/metadata-{1:04d}.xml'.format(tempfile.gettempdir(), self.revision), arcname='metadata.xml')
+                _zf.write('{0}/storage-global.json'.format(tempfile.gettempdir()), arcname='storage-global.json')
             finally:
                 _zf.close()
+                ladu_move_file_to_storage("{0}/resource.zip".format(tempfile.gettempdir()), self._storage_folder_ladu())
+                os.remove("{0}/metadata-{1:04d}.xml".format(tempfile.gettempdir(), self.revision))
+                os.remove("{0}/storage-global.json".format(tempfile.gettempdir()))
             # update zip digest checksum
             self.digest_checksum = \
               compute_digest_checksum(self.metadata, self.global_storage)
@@ -425,9 +449,12 @@ class StorageObject(models.Model):
         if self.local_storage != _local_storage:
             self.local_storage = _local_storage
             if self.publication_status in (INGESTED, PUBLISHED):
-                with open('{0}/storage-local.json'.format(
-                  self._storage_folder()), 'wb') as _out:
+                # with open('{0}/storage-local.json'.format(self._storage_folder()), 'wb') as _out:
+                #     _out.write(unicode(self.local_storage).encode('utf-8'))
+                # LADU
+                with open("{0}/storage-local.json".format(tempfile.gettempdir()), "wb") as _out:
                     _out.write(unicode(self.local_storage).encode('utf-8'))
+                ladu_move_file_to_storage("{0}/storage-local.json".format(tempfile.gettempdir()), self._storage_folder_ladu())
                 return True
 
         return False
@@ -559,6 +586,20 @@ def add_or_update_resource(storage_json, resource_xml_string, storage_digest,
                 .encode('utf-8'))
         with open(os.path.join(folder, 'metadata.xml'), 'wb') as out:
             out.write(unicode(resource_xml_string).encode('utf-8'))
+
+    # LADU equivalent to write_to_disk()
+    def write_to_storage(storage_id):
+        folder = settings.STORAGE_PATH + '/' + storage_id
+        subprocess.call(["mc", "mb", "--ignore-existing", folder])
+        with open(os.path.join(tempfile.gettempdir(), 'storage-global.json'), 'wb') as out:
+            out.write(
+              unicode(
+                dumps(storage_json, cls=DjangoJSONEncoder, sort_keys=True, separators=(',',':')))
+                .encode('utf-8'))
+        subprocess.call(["mc", "mv", os.path.join(tempfile.gettempdir(), 'storage-global.json'), folder + '/' + 'storage-global.json'])
+        with open(os.path.join(tempfile.gettempdir(), 'metadata.xml'), 'wb') as out:
+            out.write(unicode(resource_xml_string).encode('utf-8'))
+        subprocess.call(["mc", "mv", os.path.join(tempfile.gettempdir(), 'metadata.xml'), folder + '/' +  'metadata.xml'])
 
     def storage_object_exists(storage_id):
         return bool(StorageObject.objects.filter(identifier=storage_id).count() > 0)

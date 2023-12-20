@@ -1,30 +1,31 @@
-import tempfile
-from metashare.ladu_utils import *
-
-from django.core.exceptions import ValidationError, ObjectDoesNotExist
-from django.db import models
-# pylint: disable-msg=E0611
-from hashlib import md5
-from metashare.settings import LOG_HANDLER
-from metashare import settings
-from os import mkdir, remove
-from os.path import exists
-import os.path
-from uuid import uuid1, uuid4
-from xml.etree import ElementTree as etree
-from datetime import datetime, timedelta
-import logging
 import re
-from json import dumps, loads
-from django.core.serializers.json import DjangoJSONEncoder
-import zipfile
-from zipfile import ZIP_DEFLATED
-from django.db.models.query_utils import Q
 import glob
+import logging
+import zipfile
+import os.path
+import tempfile
+
+# pylint: disable-msg=E0611
+
+from json import dumps, loads
+from uuid import uuid1, uuid4
+from hashlib import md5
+from os.path import exists
+from zipfile import ZIP_DEFLATED
+from datetime import datetime, timedelta
+from xml.etree import ElementTree as etree
+
+from django.db import models
+from django.core.exceptions import ValidationError, ObjectDoesNotExist
+from django.core.serializers.json import DjangoJSONEncoder
+from django.db.models.query_utils import Q
+
+from metashare import settings, doi_utils
+from metashare.ladu_utils import *
 
 # Setup logging support.
 LOGGER = logging.getLogger(__name__)
-LOGGER.addHandler(LOG_HANDLER)
+LOGGER.addHandler(settings.LOG_HANDLER)
 
 ALLOWED_ARCHIVE_EXTENSIONS = ('zip', 'tar.gz', 'gz', 'tgz', 'tar', 'bzip2')
 MAXIMUM_MD5_BLOCK_SIZE = 1024
@@ -51,12 +52,14 @@ COPY_CHOICES = (
     (PROXY, 'proxy copy'))
 
 # attributes to by serialized in the global JSON of the storage object
-GLOBAL_STORAGE_ATTS = ['source_url', 'identifier', 'created', 'modified', 
+GLOBAL_STORAGE_ATTS = ['source_url', 'identifier', 'created', 'modified',
   'revision', 'publication_status', 'metashare_version', 'deleted']
 
 # attributes to be serialized in the local JSON of the storage object
-LOCAL_STORAGE_ATTS = ['digest_checksum', 'digest_modified', 
+LOCAL_STORAGE_ATTS = ['digest_checksum', 'digest_modified',
   'digest_last_checked', 'copy_status', 'source_node']
+
+DOI_MID = '/repository/browse/'
 
 
 def _validate_valid_xml(value):
@@ -68,11 +71,11 @@ def _validate_valid_xml(value):
         _value = XML_DECL.sub(u'', value)
         _ = etree.fromstring(_value.encode('utf-8'))
         return True
-    
+
     except etree.ParseError, parse_error:
         # In case of an exception, we raise a ValidationError.
         raise ValidationError(parse_error)
-    
+
     # cfedermann: in case of other exceptions, raise a ValidationError with
     #   the corresponding error message.  This will prevent the exception
     #   page handler to be shown and is hence more acceptable for end users.
@@ -85,13 +88,13 @@ def _create_uuid():
     """
     # Create new identifier based on a UUID-1 and a UUID-4.
     new_id = '{0}{1}'.format(uuid1().hex, uuid4().hex)
-    
+
     # Check for collisions; in case of a collision, create new identifier.
     while StorageObject.objects.filter(identifier=new_id):
         new_id = '{0}{1}'.format(uuid1().hex, uuid4().hex)
-    
+
     return new_id
-    
+
 
 # pylint: disable-msg=R0902
 class StorageObject(models.Model):
@@ -99,69 +102,72 @@ class StorageObject(models.Model):
     Models an object inside the persistent storage layer.
     """
     __schema_name__ = "STORAGEOJBECT"
-    
+
     class Meta:
         permissions = (
             ('can_sync', 'Can synchronize'),
         )
-      
+
     source_url = models.URLField(verify_exists=False, editable=False,
       default=settings.DJANGO_URL,
       help_text="(Read-only) base URL for the server where the master copy of " \
       "the associated language resource is located.")
-    
+
     identifier = models.CharField(max_length=64, default=_create_uuid,
       editable=False, unique=True, help_text="(Read-only) unique " \
       "identifier for this storage object instance.")
-    
+
     created = models.DateTimeField(auto_now_add=True, editable=False,
       help_text="(Read-only) creation date for this storage object instance.")
-    
+
     modified = models.DateTimeField(editable=False, default=datetime.now(),
       help_text="(Read-only) last modification date of the metadata XML " \
       "for this storage object instance.")
-    
+
     checksum = models.CharField(blank=True, null=True, max_length=32,
       help_text="(Read-only) MD5 checksum of the binary data for this " \
       "storage object instance.")
-    
+
     digest_checksum = models.CharField(blank=True, null=True, max_length=32,
       help_text="(Read-only) MD5 checksum of the digest zip file containing the " \
       "global serialized storage object and the metadata XML for this " \
       "storage object instance.")
-      
+
     digest_modified = models.DateTimeField(editable=False, null=True, blank=True,
       help_text="(Read-only) last modification date of digest zip " \
       "for this storage object instance.")
-    
+
     digest_last_checked = models.DateTimeField(editable=False, null=True, blank=True,
       help_text="(Read-only) last update check date of digest zip " \
       "for this storage object instance.")
-    
+
     revision = models.PositiveIntegerField(default=1, help_text="Revision " \
       "or version information for this storage object instance.")
-      
-    metashare_version = models.CharField(max_length=32, editable=False, 
+
+    metashare_version = models.CharField(max_length=32, editable=False,
       default=settings.METASHARE_VERSION,
       help_text="(Read-only) META-SHARE version used with the storage object instance.")
-    
+
+    doi_identifier = models.CharField(max_length=64, unique=True, blank=True,
+      help_text="Digital Object Identifier (with prefix)")
+
     def _get_master_copy(self):
         return self.copy_status == MASTER
-    
+
     def _set_master_copy(self, value):
         if value == True:
             self.copy_status = MASTER
         else:
             self.copy_status = REMOTE
-    
+
     master_copy = property(_get_master_copy, _set_master_copy)
-    
+
     copy_status = models.CharField(default=MASTER, max_length=1, editable=False, choices=COPY_CHOICES,
         help_text="Generalized copy status flag for this storage object instance.")
-    
+
     def _get_published(self):
         return self.publication_status == PUBLISHED
-    
+
     def _set_published(self, value):
         if value == True:
             self.publication_status = PUBLISHED
@@ -171,33 +177,33 @@ class StorageObject(models.Model):
             # else don't change
             if self.publication_status == PUBLISHED:
                 self.publication_status = INGESTED
-    
+
     published = property(_get_published, _set_published)
-    
+
     publication_status = models.CharField(default=INTERNAL, max_length=1, choices=STATUS_CHOICES,
         help_text="Generalized publication status flag for this " \
         "storage object instance.")
-    
-    source_node = models.CharField(blank=True, null=True, max_length=32, editable=False, 
+
+    source_node = models.CharField(blank=True, null=True, max_length=32, editable=False,
       help_text="(Read-only) id of source node from which the resource " \
         "originally stems as set in local_settings.py in CORE_NODES and " \
         "PROXIED_NODES; empty if resource stems from this local node")
-    
+
     deleted = models.BooleanField(default=False, help_text="Deletion " \
       "status flag for this storage object instance.")
-    
+
     metadata = models.TextField(validators=[_validate_valid_xml],
       help_text="XML containing the metadata description for this storage " \
       "object instance.")
-      
+
     global_storage = models.TextField(default='not set yet',
       help_text="text containing the JSON serialization of global attributes " \
       "for this storage object instance.")
-    
+
     local_storage = models.TextField(default='not set yet',
       help_text="text containing the JSON serialization of local attributes " \
       "for this storage object instance.")
-    
+
     def get_digest_checksum(self):
         """
         Checks if the current digest is till up-to-date, recreates it if
@@ -205,16 +211,16 @@ class StorageObject(models.Model):
         """
         _expiration_date = _get_expiration_date()
         if _expiration_date > self.digest_modified \
-          and _expiration_date > self.digest_last_checked: 
+          and _expiration_date > self.digest_last_checked:
             self.update_storage()
         return self.digest_checksum
-    
+
     def __unicode__(self):
         """
         Returns the Unicode representation for this storage object instance.
         """
         return u'<StorageObject id="{0}">'.format(self.id)
-    
+
     def _storage_folder(self):
         """
         Returns the path to the local folder for this storage object instance.
@@ -250,7 +256,7 @@ class StorageObject(models.Model):
                 return _binary_data
 
         return None
-    
+
     def save(self, *args, **kwargs):
         """
         Overwrites the predefined save() method to ensure that STORAGE_PATH
@@ -259,10 +265,10 @@ class StorageObject(models.Model):
         """
         # Perform a full validation for this storage object instance.
         self.full_clean()
-        
+
         # Call save() method from super class with all arguments.
         super(StorageObject, self).save(*args, **kwargs)
-    
+
     def update_storage(self, force_digest=False):
         """
         Updates the metadata XML if required and serializes it and this storage
@@ -284,6 +290,7 @@ class StorageObject(models.Model):
         if self.master_copy and self.source_url != settings.DJANGO_URL:
             self.source_url = settings.DJANGO_URL
             source_url_updated = True
+            doi_utils.update_doi_url()
         else:
             source_url_updated = False
 
@@ -293,28 +300,28 @@ class StorageObject(models.Model):
                 self.save()
             return
 
-        self.digest_last_checked = datetime.now()        
+        self.digest_last_checked = datetime.now()
 
         # check metadata serialization
         metadata_updated = self.check_metadata()
-        
+
         # check global storage object serialization
         global_updated = self.check_global_storage_object()
-        
+
         # create new digest zip-archive if required
         if force_digest or metadata_updated or global_updated:
             self.create_digest()
-            
+
         # check local storage object serialization
         local_updated = self.check_local_storage_object()
-        
+
         # save storage object if required; this should always happen since
         # at least self.digest_last_checked in the local storage object 
         # has changed
         if source_url_updated or metadata_updated or global_updated \
                 or local_updated:
+            doi_utils.update_doi(self, test=settings.DOI_TEST)
             self.save()
-
 
     def check_metadata(self):
         """
@@ -325,10 +332,10 @@ class StorageObject(models.Model):
         
         Returns a flag indicating if the serialization was updated. 
         """
-        
+
         # flag to indicate if rebuilding of metadata.xml is required
         update_xml = False
-        
+
         # create current version of metadata XML
         from metashare.xml_utils import to_xml_string
         try:
@@ -339,10 +346,10 @@ class StorageObject(models.Model):
               encoding="ASCII")
         except:
             # pylint: disable-msg=E1101
-            LOGGER.error('PROBLEMATIC: %s - count: %s', self.identifier, 
+            LOGGER.error('PROBLEMATIC: %s - count: %s', self.identifier,
               self.resourceinfotype_model_set.count(), exc_info=True)
             raise
-        
+
         if self.metadata != _metadata:
             self.metadata = _metadata
             LOGGER.debug(u"\nMETADATA: {0}\n".format(self.metadata))
@@ -353,7 +360,7 @@ class StorageObject(models.Model):
             if self.publication_status in (INGESTED, PUBLISHED) \
               and self.copy_status == MASTER:
                 self.revision += 1
-            
+
         # check if there exists a metadata XML file; this is not the case if
         # the publication status just changed from internal to ingested
         # or if the resource was received when syncing
@@ -363,8 +370,6 @@ class StorageObject(models.Model):
         #     update_xml = True
         # LADU
         if self.publication_status in (INGESTED, PUBLISHED) and not ladu_file_exists('metadata-{0:04d}.xml'.format(self.revision), self._storage_folder_ladu()):
-        # ???
-        # if self.publication_status in (INGESTED, PUBLISHED) and not ladu_file_exists(self._storage_folder_ladu(), 'metadata-{0:04d}.xml'.format(self.revision)):
             update_xml = True
 
         if update_xml:
@@ -377,10 +382,10 @@ class StorageObject(models.Model):
                 _fo.write(unicode(self.metadata).encode('ASCII'))
             ladu_move_file_to_storage("{0}/metadata-{1:04d}.xml".format(tempfile.gettempdir(), self.revision),
                                       self._storage_folder_ladu())
-        
+
         return update_xml
-        
-    
+
+
     def check_global_storage_object(self):
         """
         Checks if the global storage object serialization has changed. If yes,
@@ -388,7 +393,7 @@ class StorageObject(models.Model):
         
         Returns a flag indicating if the serialization was updated. 
         """
-        
+
         _dict_global = { }
         for item in GLOBAL_STORAGE_ATTS:
             _dict_global[item] = getattr(self, item)
@@ -404,10 +409,10 @@ class StorageObject(models.Model):
                     _out.write(unicode(self.global_storage).encode('utf-8'))
                 ladu_move_file_to_storage("{0}/storage-global.json".format(tempfile.gettempdir()), self._storage_folder_ladu())
                 return True
-                
+
         return False
 
-    
+
     def create_digest(self):
         """
         Creates a new digest zip-archive for master and proxy copies.
@@ -431,8 +436,8 @@ class StorageObject(models.Model):
               compute_digest_checksum(self.metadata, self.global_storage)
             # update last modified timestamp
             self.digest_modified = datetime.now()
-            
-            
+
+
     def check_local_storage_object(self):
         """
         Checks if the local storage object serialization has changed. If yes,
@@ -440,7 +445,7 @@ class StorageObject(models.Model):
         
         Returns a flag indicating if the serialization was updated. 
         """
-        
+
         _dict_local = { }
         for item in LOCAL_STORAGE_ATTS:
             _dict_local[item] = getattr(self, item)
@@ -484,14 +489,14 @@ def restore_from_folder(storage_id, copy_status=MASTER, \
     Returns the restored resource with its storage object set.
     """
     from metashare.repository.models import resourceInfoType_model
-    
+
     # if a storage object with this id already exists, delete it
     try:
         _so = StorageObject.objects.get(identifier=storage_id)
         _so.delete()
     except ObjectDoesNotExist:
         _so = None
-    
+
     storage_folder = os.path.join(settings.STORAGE_PATH, storage_id)
 
     # get most current metadata.xml
@@ -516,7 +521,7 @@ def restore_from_folder(storage_id, copy_status=MASTER, \
     # at this point, a storage object is already created at the resource, so update it 
     _storage_object = resource.storage_object
     _storage_object.metadata = _xml_string
-    
+
     # add global storage object attributes if available
     if os.path.isfile('{0}/storage-global.json'.format(storage_folder)):
         _global_json = \
@@ -525,7 +530,7 @@ def restore_from_folder(storage_id, copy_status=MASTER, \
     else:
         LOGGER.warn('missing storage-global.json, importing resource as new')
         _storage_object.identifier = storage_id
-        
+
     # add local storage object attributes if available 
     if os.path.isfile('{0}/storage-local.json'.format(storage_folder)):
         _local_json = \
@@ -545,18 +550,18 @@ def restore_from_folder(storage_id, copy_status=MASTER, \
             # a default
             LOGGER.warn('no copy status provided, using default copy status MASTER')
             _storage_object.copy_status = MASTER
-    
+
     # set storage digest if provided (usually for non-local resources)
     if storage_digest:
         _storage_object.digest_checksum = storage_digest
     # set source node id if provided (usually for non-local resources)
     if source_node:
         _storage_object.source_node = source_node
-    
+
     _storage_object.update_storage(force_digest=force_digest)
     # update_storage includes saving
     #_storage_object.save()
-        
+
     return resource
 
 
@@ -625,7 +630,7 @@ def add_or_update_resource(storage_json, resource_xml_string, storage_digest,
             resource = storage_object.resourceinfotype_model_set.all()[0]
         except:
             # pylint: disable-msg=E1101
-            LOGGER.error('PROBLEMATIC: %s - count: %s', storage_object.identifier, 
+            LOGGER.error('PROBLEMATIC: %s - count: %s', storage_object.identifier,
               storage_object.resourceinfotype_model_set.count(), exc_info=True)
             raise
         # we have to keep the statistics and recommendations for this resource
@@ -668,13 +673,13 @@ def update_digests():
     """
     LOGGER.info('Starting to update digests.')
     _expiration_date = _get_expiration_date()
-    
+
     # get all master copy storage object of ingested and published resources
     for _so in StorageObject.objects.filter(
       Q(copy_status=MASTER),
       Q(publication_status=INGESTED) | Q(publication_status=PUBLISHED)):
         if _expiration_date > _so.digest_modified \
-          and _expiration_date > _so.digest_last_checked: 
+          and _expiration_date > _so.digest_last_checked:
             LOGGER.info('updating {}'.format(_so.identifier))
             _so.update_storage()
         else:
@@ -693,7 +698,7 @@ def repair_storage_folder():
             # if storage folder is found, delete all files except a possible
             # binary
             folder = os.path.join(settings.STORAGE_PATH, _so.identifier)
-            for _file in ('storage-local.json', 'storage-global.json', 
+            for _file in ('storage-local.json', 'storage-global.json',
               'resource.zip', 'metadata.xml', 'metadata-*.xml'):
                 path = os.path.join(folder, _file)
                 for _path in glob.glob(path):
@@ -713,7 +718,7 @@ def repair_storage_objects():
     for _so in StorageObject.objects.all():
         if _so.resourceinfotype_model_set.count() == 0:
             LOGGER.info('remove storage object {}'.format(_so.identifier))
-            _so.delete() 
+            _so.delete()
 
 
 def compute_checksum(infile):
@@ -741,13 +746,13 @@ def compute_digest_checksum(metadata, global_storage):
     """
     Computes the digest checksum for the given metadata and global storage objects.
     """
-    _cs = md5() 
+    _cs = md5()
     _cs.update(metadata)
     _cs.update(global_storage)
     return _cs.hexdigest()
 
 class IllegalAccessException(Exception):
-    pass        
+    pass
 
 def _get_expiration_date():
     """

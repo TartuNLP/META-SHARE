@@ -148,7 +148,7 @@ class StorageObject(models.Model):
       default=settings.METASHARE_VERSION,
       help_text="(Read-only) META-SHARE version used with the storage object instance.")
 
-    doi_identifier = models.CharField(max_length=64, unique=True, blank=True,
+    doi_identifier = models.CharField(max_length=64, blank=True,
       help_text="Digital Object Identifier (with prefix)")
 
     def _get_master_copy(self):
@@ -245,16 +245,29 @@ class StorageObject(models.Model):
         return _old_checksum != self.checksum
 
     def get_download(self):
-        """
-        Returns the local path to the downloadable data or None if there is no
-        download data.
-        """
-        _path = '{0}/archive'.format(self._storage_folder())
+        # If there's a single archive, return its path
+        # Sama asi, aga LADU kasutades
         for _ext in ALLOWED_ARCHIVE_EXTENSIONS:
-            _binary_data = '{0}.{1}'.format(_path, _ext)
-            if exists(_binary_data):
-                return _binary_data
+            filename = 'archive.{0}'.format(_ext)
+            if filename in ladu_list_folder(self._storage_folder()):
+                return '{0}/{1}'.format(self._storage_folder(), filename)
 
+        # If there are multiple non-metadata files, return a list of their paths
+        pattern = re.compile(r'metadata-\d\d\d\d.xml')
+        internals = {"resource.zip", "storage-global.json", "storage-local.json", "/"}
+        # Disregard metadata XML files
+        midway_result = [i for i in ladu_list_folder(self._storage_folder()) if not pattern.match(i)]
+        # Disregard other internal files
+        result_set = set(midway_result) - internals
+        # If anything remains, return their proper paths
+        if result_set:
+            result = []
+            for filename in result_set:
+                result.append({"name": filename,
+                               "url": ladu_get_download_url('{0}/{1}'.format(self._storage_folder(), filename))})
+            return result
+
+        # If there's no download data, return None
         return None
 
     def save(self, *args, **kwargs):
@@ -320,7 +333,6 @@ class StorageObject(models.Model):
         # has changed
         if source_url_updated or metadata_updated or global_updated \
                 or local_updated:
-            doi_utils.update_doi(self, test=settings.DOI_TEST)
             self.save()
 
     def check_metadata(self):

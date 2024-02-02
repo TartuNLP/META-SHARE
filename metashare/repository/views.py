@@ -7,7 +7,7 @@ from mimetypes import guess_type
 
 from django.contrib.auth.decorators import login_required
 from django.core.urlresolvers import reverse
-from django.http import HttpResponse
+from django.http import HttpResponseRedirect
 from django.shortcuts import render_to_response, get_object_or_404, redirect
 from django.template import RequestContext
 from django.contrib import messages
@@ -34,6 +34,7 @@ from metashare.recommendations.recommendations import SessionResourcesTracker, \
     get_download_recommendations, get_view_recommendations, \
     get_more_from_same_creators_qs, get_more_from_same_projects_qs
 
+from metashare.ladu_utils import ladu_get_download_url
 
 MAXIMUM_READ_BLOCK_SIZE = 4096
 
@@ -259,36 +260,26 @@ def download(request, object_id):
                                   context_instance=RequestContext(request))
 
 
+def select_download(request, resource, file_list):
+    # TODO: generate file list using
+    context = {'resource': resource,
+               'file_list': file_list}
+    return render_to_response('repository/select_download.html',
+                              context,
+                              context_instance=RequestContext(request))
+
+
 def _provide_download(request, resource, download_urls):
     """
     Returns an HTTP response with a download of the given resource.
     """
-    dl_path = resource.storage_object.get_download()
-    if dl_path:
-        try:
-            def dl_stream_generator():
-                with open(dl_path, 'rb') as _local_data:
-                    _chunk = _local_data.read(MAXIMUM_READ_BLOCK_SIZE)
-                    while _chunk:
-                        yield _chunk
-                        _chunk = _local_data.read(MAXIMUM_READ_BLOCK_SIZE)
+    dl_paths = resource.storage_object.get_download()
+    if type(dl_paths) == str:
+        # Aasta on 2024 ja Ladu on lokaalne
+        return HttpResponseRedirect(ladu_get_download_url(dl_paths))
+    elif type(dl_paths) == list:
+        return select_download(request, resource, dl_paths)
 
-            # build HTTP response with a guessed mime type; the response
-            # content is a stream of the download file
-            filemimetype = guess_type(dl_path)[0] or "application/octet-stream"
-            response = HttpResponse(dl_stream_generator(),
-                                    mimetype=filemimetype)
-            response['Content-Length'] = getsize(dl_path) 
-            response['Content-Disposition'] = 'attachment; filename={0}' \
-                                                .format(split(dl_path)[1])
-            _update_download_stats(resource, request)
-            LOGGER.info("Offering a local download of resource #{0}." \
-                        .format(resource.id))
-            return response
-        except:
-            LOGGER.warn("An error has occurred while trying to provide the " \
-                        "local download copy of resource #{0}." \
-                        .format(resource.id))
     # redirect to a download location, if available
     elif download_urls:
         for url in download_urls:

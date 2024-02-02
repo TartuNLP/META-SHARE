@@ -22,6 +22,8 @@ source "${METASHAREDIR}/../venv/bin/activate"
 
 python "$METASHARETOPDIR/manage.py" build_solr_schema --filename="$MAINSCHEMAFILE"
 
+#python "$METASHARETOPDIR/manage.py" rebuild_index
+
 deactivate
 
 cp "$MAINSCHEMAFILE" "$TESTINGSCHEMAFILE"
@@ -32,5 +34,4 @@ echo "Trying to start SOLR server"
 (cd "$SOLR_ROOT"
 nohup java -Djetty.port=$SOLR_PORT -DSTOP.PORT=$SOLR_STOP_PORT -DSTOP.KEY="$SOLR_STOP_KEY" -jar start.jar > "$SOLR_LOG" 2>&1 &
 )
-
 

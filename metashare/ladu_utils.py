@@ -6,6 +6,10 @@ def ladu_folder_exists(dirname):
     return dirname in list(map(lambda x: x[:-1], subprocess.check_output(["mc", "ls", STORAGE_PATH]).split()[4::5]))
 
 
+def ladu_list_folder(dirname):
+    return subprocess.check_output(["mc", "ls", dirname]).split()[5::6]
+
+
 def ladu_file_exists(filename, dirname):
     return filename in list(map(lambda x: x[:-1],
                                 subprocess.check_output(["mc", "ls", STORAGE_PATH + "/" + dirname]).split()[4::5]))
@@ -27,3 +31,8 @@ def ladu_copy_file_from_storage(file_path, destination_path):
 # Do NOT use to write b'', pure strings only!
 def ladu_write_file(content, file_path):
     subprocess.call('echo "{0}" | mc pipe {1}/{2}'.format(content, STORAGE_PATH, file_path), shell=True)
+
+
+def ladu_get_download_url(filepath):
+    # The [:-1] at the end removes the newline character
+    return subprocess.check_output(["mc", "share", "download", filepath]).split("\nShare: ")[1][:-1]

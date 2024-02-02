@@ -1,8 +1,6 @@
 import datetime
 import tempfile
 
-from metashare.ladu_utils import ladu_move_file_to_storage
-
 from django import forms
 from django.contrib import admin, messages
 from django.contrib.admin.util import unquote
@@ -42,6 +40,9 @@ from metashare.stats.model_utils import saveLRStats, UPDATE_STAT, INGEST_STAT, D
 from metashare.storage.models import PUBLISHED, INGESTED, INTERNAL, \
     ALLOWED_ARCHIVE_EXTENSIONS
 from metashare.utils import verify_subclass, create_breadcrumb_template_params
+
+from metashare import doi_utils
+from metashare.ladu_utils import ladu_move_file_to_storage
 
 
 csrf_protect_m = method_decorator(csrf_protect)
@@ -215,6 +216,7 @@ def change_resource_status(resource, status, precondition_status=None):
         resource.storage_object.save()
         # explicitly write metadata XML and storage object to the storage folder
         resource.storage_object.update_storage()
+        doi_utils.update_doi(resource.storage_object, test=settings.DOI_TEST)
         return True
     return False
 
@@ -1200,6 +1202,7 @@ class ResourceModelAdmin(SchemaModelAdmin):
     
     def delete_model(self, request, obj):
         obj.storage_object.deleted = True
+        # doi_utils.update_doi(obj.storage_object, test=settings.DOI_TEST)
         obj.storage_object.save()
         # explicitly write metadata XML and storage object to the storage folder
         obj.storage_object.update_storage()

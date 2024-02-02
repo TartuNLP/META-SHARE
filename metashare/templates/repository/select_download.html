@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}
+{{ resource }} &ndash; Choose files to download &ndash; META-SHARE
+{% endblock %}
+
+{% block content %}
+    
+    <h2>{{ resource }}</h2>
+    <div class="files">
+    {% for file in file_list %}
+        <li><a href="{{ file.url }}">{{ file.name }}</a></li>
+    {% endfor %}
+    </div>
+    
+{% endblock %}

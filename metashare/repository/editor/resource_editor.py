@@ -806,7 +806,7 @@ class ResourceModelAdmin(SchemaModelAdmin):
 
                     # Update the corresponding StorageObject to update its
                     # download data checksum.
-                    obj.storage_object.compute_checksum()
+                    obj.storage_object.compute_checksum(uploaded_file=resource)
                     obj.storage_object.save()
 
                     change_message = 'Uploaded "{}" to "{}" in {}.'.format(

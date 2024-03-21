@@ -230,7 +230,7 @@ class StorageObject(models.Model):
     def _storage_folder_ladu(self):
         return self.identifier
 
-    def compute_checksum(self):
+    def compute_checksum(self, uploaded_file=None):
         """
         Computes the MD5 hash checksum for the binary archive which may be
         attached to this storage object instance and sets it in `self.checksum`.
@@ -241,7 +241,10 @@ class StorageObject(models.Model):
             return False
 
         _old_checksum = self.checksum
-        self.checksum = compute_checksum(self.get_download())
+        if uploaded_file is not None:
+            self.checksum = compute_checksum(uploaded_file)
+        else:
+            self.checksum = compute_checksum(self.get_download())
         return _old_checksum != self.checksum
 
     def get_download(self):
@@ -400,7 +403,8 @@ class StorageObject(models.Model):
 
     def check_global_storage_object(self):
         """
-        Checks if the global storage object serialization has changed. If yes,
+        Checks if the global storage object serialization has changed.
+        If yes, or if the file is missing from the storage folder,
         updates it in the storage folder.
         
         Returns a flag indicating if the serialization was updated. 
@@ -411,7 +415,7 @@ class StorageObject(models.Model):
             _dict_global[item] = getattr(self, item)
         _global_storage = \
           dumps(_dict_global, cls=DjangoJSONEncoder, sort_keys=True, separators=(',',':'))
-        if self.global_storage != _global_storage:
+        if self.global_storage != _global_storage or not ladu_file_exists("storage-global.json", self._storage_folder_ladu()):
             self.global_storage = _global_storage
             if self.publication_status in (INGESTED, PUBLISHED):
                 # with open('{0}/storage-global.json'.format(self._storage_folder()), 'wb') as _out:
@@ -452,7 +456,8 @@ class StorageObject(models.Model):
 
     def check_local_storage_object(self):
         """
-        Checks if the local storage object serialization has changed. If yes,
+        Checks if the local storage object serialization has changed.
+        If yes, or if the file is missing from the storage folder,
         updates it in the storage folder.
         
         Returns a flag indicating if the serialization was updated. 
@@ -463,7 +468,7 @@ class StorageObject(models.Model):
             _dict_local[item] = getattr(self, item)
         _local_storage = \
           dumps(_dict_local, cls=DjangoJSONEncoder, sort_keys=True, separators=(',',':'))
-        if self.local_storage != _local_storage:
+        if self.local_storage != _local_storage or not ladu_file_exists("storage-local.json", self._storage_folder_ladu()):
             self.local_storage = _local_storage
             if self.publication_status in (INGESTED, PUBLISHED):
                 # with open('{0}/storage-local.json'.format(self._storage_folder()), 'wb') as _out:
@@ -740,16 +745,22 @@ def compute_checksum(infile):
             a file path which can be opened using open(infile, 'rb').
     """
     checksum = md5()
-    try:
+
+    # If infile is a django UploadedFile, process it accordingly
+    if hasattr(infile, 'chunks'):
+        for chunk in infile.chunks(chunk_size=MAXIMUM_MD5_BLOCK_SIZE):
+            checksum.update(chunk)
+    else:
         if hasattr(infile, 'read'):
             instream = infile
         else:
             instream = open(infile, 'rb')
+
         chunk = instream.read(MAXIMUM_MD5_BLOCK_SIZE)
         while chunk:
             checksum.update(chunk)
             chunk = instream.read(MAXIMUM_MD5_BLOCK_SIZE)
-    finally:
+
         instream.close()
     return checksum.hexdigest()
 
@@ -763,8 +774,10 @@ def compute_digest_checksum(metadata, global_storage):
     _cs.update(global_storage)
     return _cs.hexdigest()
 
+
 class IllegalAccessException(Exception):
     pass
+
 
 def _get_expiration_date():
     """

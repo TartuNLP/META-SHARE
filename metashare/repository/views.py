@@ -261,9 +261,8 @@ def download(request, object_id):
 
 
 def select_download(request, resource, file_list):
-    # TODO: generate file list using
     context = {'resource': resource,
-               'file_list': file_list}
+               'file_list': sorted(file_list)}
     return render_to_response('repository/select_download.html',
                               context,
                               context_instance=RequestContext(request))
